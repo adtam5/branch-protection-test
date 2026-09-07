@@ -11,7 +11,7 @@ env:
   CI: true
 
 jobs:
-  qa-test:
+  ci-checks:
     if: ${{ !contains(github.event.pull_request.labels.*.name, 'do not build') }}
     runs-on: ubuntu-latest
     permissions:
