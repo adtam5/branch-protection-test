@@ -42,5 +42,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Run Biome CI checks
-        run: pnpm biome ci --reporter=github --reporter=default --changed --since=origin/${{ github.base_ref }}
+      - name: Run Biome CI checks for pull request
+        if: github.event_name == 'pull_request'
+        run: pnpm biome ci --no-errors-on-unmatched --reporter=github --reporter=default --changed --since=origin/${{ github.base_ref }}
+
+      - name: Run Biome CI checks for push to main or merge queue
+        if: github.event_name == 'push' || github.event_name == 'merge_group'
+        run: pnpm biome ci --no-errors-on-unmatched --reporter=github --reporter=default
