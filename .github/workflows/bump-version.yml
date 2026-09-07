@@ -1,0 +1,82 @@
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+name: Bump Version on Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+    paths-ignore:
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+jobs:
+  version-bump:
+    # Only run if PR was actually merged (not just closed)
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    concurrency:
+      group: version-bump-main
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ env.GCSE_GITHUB_ACTIONS_PAT }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: ".nvmrc"
+          cache: "pnpm"
+
+      - name: Configure Git
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+
+      - name: Bump Version
+        id: bump-version
+        run: |
+          VERSION_TYPE="${{ steps.version-type.outputs.version-type }}"
+
+          pnpm version $VERSION_TYPE --no-git-tag-version
+          NEW_VERSION=$(node -p "require('./package.json').version")
+
+          git fetch --tags
+          if git tag -l "v$NEW_VERSION" | grep -q "v$NEW_VERSION"; then
+            echo "❌ ERROR: Tag v$NEW_VERSION already exists!" >&2
+            echo "This PR's changes are merged to main but won't be included in the existing tag." >&2
+            echo "Manual intervention required to resolve version conflict." >&2
+            git checkout -- package.json pnpm-lock.yaml
+            exit 1
+          fi
+
+          echo "✅ Bumping to v$NEW_VERSION"
+          echo "new-version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          git add package.json pnpm-lock.yaml
+          git commit -m "chore: bump version to $NEW_VERSION for PR #${{ github.event.pull_request.number }}"
+          git tag -a "v$NEW_VERSION" -m "Version $NEW_VERSION"
+          git push origin main
+          git push origin "v$NEW_VERSION"
+
+      - name: Post Success Comment
+        if: steps.bump-version.outputs.new-version != ''
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: `✅ Version bumped to \`${{ steps.bump-version.outputs.new-version }}\``
+            });
