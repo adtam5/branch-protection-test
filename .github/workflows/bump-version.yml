@@ -21,6 +21,8 @@ jobs:
     concurrency:
       group: version-bump-main
       cancel-in-progress: false
+    env:
+      VERSION_BUMP_TOKEN: ${{ secrets.VERSION_BUMP_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -28,7 +30,15 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          token: ${{ secrets.ACCESS_TOKEN }}
+
+      - name: Validate dedicated automation token
+        run: |
+          if [ -z "$VERSION_BUMP_TOKEN" ]; then
+            echo "❌ Missing VERSION_BUMP_TOKEN secret." >&2
+            echo "Create a dedicated automation user/app token and add it as VERSION_BUMP_TOKEN." >&2
+            echo "Then add that identity to the ruleset bypass list for main (and tag refs if required)." >&2
+            exit 1
+          fi
 
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
@@ -41,8 +51,9 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "GitHub Action"
+          git config --local user.email "version-bump-bot@users.noreply.github.com"
+          git config --local user.name "version-bump-bot"
+          git remote set-url origin "https://x-access-token:${VERSION_BUMP_TOKEN}@github.com/${{ github.repository }}.git"
 
       - name: Bump Version
         id: bump-version
@@ -66,8 +77,18 @@ jobs:
           git add package.json pnpm-lock.yaml
           git commit -m "chore: bump version to $NEW_VERSION for PR #${{ github.event.pull_request.number }}"
           git tag -a "v$NEW_VERSION" -m "Version $NEW_VERSION"
-          git push origin main
-          git push origin "v$NEW_VERSION"
+
+          if ! git push origin main; then
+            echo "❌ Push to main was rejected by branch/ruleset protection." >&2
+            echo "Ensure VERSION_BUMP_TOKEN identity is in the ruleset bypass list for refs/heads/main." >&2
+            exit 1
+          fi
+
+          if ! git push origin "v$NEW_VERSION"; then
+            echo "❌ Tag push was rejected by repository rules." >&2
+            echo "If tag protection/rulesets are enabled, add bypass for refs/tags/* as well." >&2
+            exit 1
+          fi
 
       - name: Post Success Comment
         if: steps.bump-version.outputs.new-version != ''
